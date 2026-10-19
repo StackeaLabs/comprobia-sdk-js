@@ -1,0 +1,24 @@
+{
+  "name": "@stackealabs/comprobia",
+  "version": "0.1.0",
+  "description": "Cliente fino de JavaScript para la API de Comprobia: facturación electrónica SUNAT por API.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "files": ["src", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "keywords": ["sunat", "facturacion electronica", "cpe", "peru", "comprobia"],
+  "homepage": "https://comprobia.stackealabs.com/desarrolladores",
+  "license": "MIT"
+}
