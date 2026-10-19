@@ -73,6 +73,10 @@ await comprobia.emitirGuia({ /* … */ });
 await comprobia.buscarCliente('ruc', '20100066603');
 await comprobia.consumo('2026-10');
 
+// Nota de venta: sin valor fiscal, no va a SUNAT. Luego, la boleta o factura que la sustituye.
+const nota = await comprobia.emitirNotaVenta({ items: [{ descripcion: 'Consulta', cantidad: '1', precio_unitario: '80.00' }] });
+await comprobia.convertirNotaVenta(nota.id, { tipo_documento: '03', serie: 'B001' });
+
 // Cualquier otra ruta de la v1:
 await comprobia.json('GET', '/webhooks');
 ```

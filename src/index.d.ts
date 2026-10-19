@@ -77,6 +77,15 @@ export declare class Comprobia {
   xml(id: string): Promise<string>;
   cdr(id: string): Promise<string>;
 
+  /** Nota de venta: sin valor fiscal, no va a SUNAT. Responde 201. */
+  emitirNotaVenta(nota: Json, claveIdempotencia?: string): Promise<Json>;
+  notaVenta(id: string): Promise<Json>;
+  notasVenta(filtros?: Record<string, string | number>): Promise<Pagina>;
+  /** La boleta (03) o factura (01) que la sustituye. Reintentar devuelve el mismo comprobante. */
+  convertirNotaVenta(id: string, datos: { tipo_documento: '01' | '03'; serie: string; fecha_emision?: string; cliente?: Json }): Promise<{ nota_venta: Json; comprobante: Json }>;
+  anularNotaVenta(id: string, motivo: string): Promise<Json>;
+  pdfNotaVenta(id: string, formato?: 'a4' | 'ticket'): Promise<Uint8Array>;
+
   emitirGuia(guia: Json, claveIdempotencia?: string): Promise<Json>;
   guia(id: string): Promise<Json>;
   buscarCliente(tipo: 'ruc' | 'dni', numero: string): Promise<Json>;

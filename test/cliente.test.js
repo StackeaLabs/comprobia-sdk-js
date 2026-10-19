@@ -131,3 +131,20 @@ test('por external_id, el PDF en bytes y la anulación', async () => {
 test('sin clave o sin RUC no se construye', () => {
   assert.throws(() => new Comprobia({ clave: '', ruc: '20123456789' }), TypeError);
 });
+
+test('nota de venta: emitir con clave, convertir sin ella', async () => {
+  const f = fetchDePrueba([
+    json(201, { id: 'n1', numero: 'NV01-1' }),
+    json(202, { nota_venta: { estado: 'CONVERTIDA' }, comprobante: { numero_completo: 'B001-1' } }),
+  ]);
+  const c = cliente(f);
+
+  const nota = await c.emitirNotaVenta({ items: [] });
+  const r = await c.convertirNotaVenta(nota.id, { tipo_documento: '03', serie: 'B001' });
+
+  assert.equal(r.comprobante.numero_completo, 'B001-1');
+  assert.equal(f.peticiones[0].url, 'https://comprobia.test/api/v1/20123456789/notas-venta');
+  assert.match(f.peticiones[0].headers['Idempotency-Key'], /^[0-9a-f-]{36}$/);
+  assert.ok(f.peticiones[1].url.endsWith('/notas-venta/n1/convertir'));
+  assert.equal(f.peticiones[1].headers['Idempotency-Key'], undefined);
+});

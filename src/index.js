@@ -134,6 +134,40 @@ export class Comprobia {
     return (await this.solicitar('GET', `/comprobantes/${encodeURIComponent(id)}/cdr`)).texto();
   }
 
+  // ── Notas de venta (sin valor fiscal) ───────────────────────────────────
+
+  /** 201 con la nota ya terminada: no va a SUNAT. */
+  emitirNotaVenta(nota, claveIdempotencia) {
+    return this.#conIdempotencia('POST', '/notas-venta', nota, claveIdempotencia);
+  }
+
+  notaVenta(id) {
+    return this.json('GET', `/notas-venta/${encodeURIComponent(id)}`);
+  }
+
+  notasVenta(filtros = {}) {
+    return this.json('GET', `/notas-venta${query(filtros)}`);
+  }
+
+  /**
+   * La boleta o factura que la sustituye. Sin Idempotency-Key: la fija la nota,
+   * así que reintentar devuelve el mismo comprobante.
+   *
+   * @param {{tipo_documento: '01'|'03', serie: string, fecha_emision?: string, cliente?: object}} datos
+   */
+  convertirNotaVenta(id, datos) {
+    return this.json('POST', `/notas-venta/${encodeURIComponent(id)}/convertir`, datos);
+  }
+
+  anularNotaVenta(id, motivo) {
+    return this.json('POST', `/notas-venta/${encodeURIComponent(id)}/anular`, { motivo });
+  }
+
+  /** @param {'a4'|'ticket'} formato @returns {Promise<Uint8Array>} */
+  async pdfNotaVenta(id, formato = 'a4') {
+    return (await this.solicitar('GET', `/notas-venta/${encodeURIComponent(id)}/pdf?formato=${formato}`)).bytes();
+  }
+
   // ── Guías, clientes, consumo ────────────────────────────────────────────
 
   emitirGuia(guia, claveIdempotencia) {
