@@ -8,15 +8,9 @@ La referencia completa de la API está en <https://comprobia.stackealabs.com/doc
 
 ## Instalar
 
-Todavía no está publicado en npm. Mientras tanto, pídenos el paquete (un
-`.tgz`) por soporte e instálalo desde el archivo:
-
 ```bash
-npm install ./stackealabs-comprobia-0.2.0.tgz
+npm install @stackealabs/comprobia
 ```
-
-Si tienes una copia del repositorio, `npm pack` dentro de él genera ese mismo
-archivo.
 
 ## Emitir
 

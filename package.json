@@ -20,5 +20,13 @@
   },
   "keywords": ["sunat", "facturacion electronica", "cpe", "peru", "comprobia"],
   "homepage": "https://comprobia.stackealabs.com/desarrolladores",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stackealabs/comprobia-sdk-js.git"
+  },
+  "bugs": "https://github.com/stackealabs/comprobia-sdk-js/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT"
 }
