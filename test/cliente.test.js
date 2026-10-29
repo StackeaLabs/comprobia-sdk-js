@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Comprobia, ErrorDeComprobia, ErrorDeConexion } from '../src/index.js';
+import { Comprobia, ErrorDeComprobia, ErrorDeConexion, Partner } from '../src/index.js';
 
 /** Un fetch de mentira: contesta lo que se le encola (null = corte de red) y anota. */
 function fetchDePrueba(respuestas) {
@@ -147,4 +147,53 @@ test('nota de venta: emitir con clave, convertir sin ella', async () => {
   assert.match(f.peticiones[0].headers['Idempotency-Key'], /^[0-9a-f-]{36}$/);
   assert.ok(f.peticiones[1].url.endsWith('/notas-venta/n1/convertir'));
   assert.equal(f.peticiones[1].headers['Idempotency-Key'], undefined);
+});
+
+test('un POST sin Idempotency-Key no se reintenta ante un corte ni un 5xx (DX-05)', async () => {
+  const corte = fetchDePrueba([null, json(201, { id: 'w' })]);
+  await assert.rejects(cliente(corte).json('POST', '/webhooks', { url: 'https://x.pe/h' }), ErrorDeConexion);
+  assert.equal(corte.peticiones.length, 1);
+
+  const caido = fetchDePrueba([json(503, { code: 'INTERNAL_ERROR', message: 'x' }), json(201, { id: 'w' })]);
+  await assert.rejects(cliente(caido).json('POST', '/exportaciones'), ErrorDeComprobia);
+  assert.equal(caido.peticiones.length, 1);
+});
+
+test('un POST sin Idempotency-Key sí se reintenta ante un 429: no se procesó', async () => {
+  const f = fetchDePrueba([json(429, { code: 'RATE_LIMITED', message: 'x' }), json(201, { id: 'w' })]);
+
+  const r = await cliente(f).json('POST', '/webhooks', { url: 'https://x.pe/h' });
+
+  assert.equal(r.id, 'w');
+  assert.equal(f.peticiones.length, 2);
+});
+
+test('buscarCliente manda el documento en el cuerpo y se reintenta (LEG-03)', async () => {
+  const f = fetchDePrueba([null, json(200, { razon_social: 'ANA' })]);
+
+  const r = await cliente(f).buscarCliente('dni', '45678912');
+
+  assert.equal(r.razon_social, 'ANA');
+  assert.equal(f.peticiones[1].url, 'https://comprobia.test/api/v1/20123456789/clientes/buscar');
+  assert.equal(f.peticiones[1].body, '{"tipo":"dni","numero":"45678912"}');
+});
+
+test('peticion llega a rutas fuera de /api/v1/{ruc} (DX-04)', async () => {
+  const f = fetchDePrueba([json(200, { codigo: '03' })]);
+
+  await cliente(f).peticion('GET', '/api/v1/catalogos/03');
+
+  assert.equal(f.peticiones[0].url, 'https://comprobia.test/api/v1/catalogos/03');
+});
+
+test('Partner lista su cartera y emite por un RUC con su misma clave (DX-04)', async () => {
+  const f = fetchDePrueba([json(200, { data: [] }), json(202, { numero_completo: 'F001-1' })]);
+  const partner = new Partner({ clave: 'cmpp_beta_y', base: 'https://comprobia.test', fetch: f, esperar: async () => {} });
+
+  await partner.emisores();
+  await partner.emisor('20100066603').emitir({ serie: 'F001' }, 'v-1');
+
+  assert.equal(f.peticiones[0].url, 'https://comprobia.test/api/partner/v1/emisores');
+  assert.equal(f.peticiones[1].url, 'https://comprobia.test/api/v1/20100066603/comprobantes');
+  assert.equal(f.peticiones[1].headers.Authorization, 'Bearer cmpp_beta_y');
 });

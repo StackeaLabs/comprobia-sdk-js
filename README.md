@@ -8,11 +8,15 @@ La referencia completa de la API está en <https://comprobia.stackealabs.com/doc
 
 ## Instalar
 
-Mientras se publica en npm, desde el repositorio:
+Todavía no está publicado en npm. Mientras tanto, pídenos el paquete (un
+`.tgz`) por soporte e instálalo desde el archivo:
 
 ```bash
-npm install <url-del-repositorio>
+npm install ./stackealabs-comprobia-0.2.0.tgz
 ```
+
+Si tienes una copia del repositorio, `npm pack` dentro de él genera ese mismo
+archivo.
 
 ## Emitir
 
@@ -55,7 +59,7 @@ La fecha de emisión es la de **Lima**, no la UTC de tu servidor: desde las 19:0
 ## Lo que hace por ti
 
 - **Idempotencia.** Cada emisión y anulación lleva una `Idempotency-Key`. Si no pasas una, la genera. Si la red se corta, reintenta con la misma, así que el comprobante no sale dos veces. Para reintentar tú más tarde, usa una tuya, por ejemplo el id de la venta. Si se agotan los intentos, `ErrorDeConexion.claveIdempotencia` dice cuál reusar.
-- **Reintentos.** Hasta 3 intentos ante un corte de red, un 5xx o un 429 (respetando `Retry-After`).
+- **Reintentos, sólo donde no duplican nada.** Hasta 3 intentos ante un corte de red, un 5xx o un 429 (respetando `Retry-After`) en las lecturas y en todo lo que lleva `Idempotency-Key`. Un `POST` sin clave —crear un webhook, rotar su secreto, pedir una exportación, anular una nota de venta— **no** se reintenta ante un corte o un 5xx, porque el servidor pudo haberlo hecho: comprueba antes de repetirlo. El 429 se reintenta siempre (no se procesó).
 - **Importes como texto.** Todo vuelve como el JSON de la API, con los importes en texto (`"118.00"`). Déjalos así: un `Number` pierde céntimos.
 
 ## Lo demás
@@ -70,15 +74,35 @@ await comprobia.pdf(id, 'ticket');   // Uint8Array: a4, a5, ticket, ticket58, ti
 await comprobia.xml(id);
 await comprobia.emitirLote([/* hasta 50 */]);
 await comprobia.emitirGuia({ /* … */ });
-await comprobia.buscarCliente('ruc', '20100066603');
+await comprobia.buscarCliente('dni', '45678912');   // el documento va en el cuerpo, no en la URL
 await comprobia.consumo('2026-10');
 
 // Nota de venta: sin valor fiscal, no va a SUNAT. Luego, la boleta o factura que la sustituye.
 const nota = await comprobia.emitirNotaVenta({ items: [{ descripcion: 'Consulta', cantidad: '1', precio_unitario: '80.00' }] });
 await comprobia.convertirNotaVenta(nota.id, { tipo_documento: '03', serie: 'B001' });
 
-// Cualquier otra ruta de la v1:
+// Cualquier otra ruta de la v1, relativa a /api/v1/{ruc}:
 await comprobia.json('GET', '/webhooks');
+
+// Y cualquier ruta del servicio, desde la raíz:
+await comprobia.peticion('GET', '/api/v1/catalogos/03');
+```
+
+## Partners
+
+Si operas los RUC de tus clientes con una clave de partner (`cmpp_…`):
+
+```js
+import { Partner } from '@stackealabs/comprobia';
+
+const partner = new Partner({ clave: process.env.COMPROBIA_CLAVE_PARTNER });
+
+await partner.emisores();                  // tu cartera
+await partner.consumo('2026-10');
+await partner.json('POST', '/emisores/20100066603/sedes', { /* … */ });
+
+// Para emitir por uno de ellos, el mismo cliente de siempre con tu clave:
+await partner.emisor('20100066603').emitir({ /* … */ }, 'VENTA-1');
 ```
 
 ## Webhooks

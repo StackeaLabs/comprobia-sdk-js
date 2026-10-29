@@ -92,8 +92,39 @@ export declare class Comprobia {
   consumo(periodo?: string): Promise<Json>;
 
   /** Cualquier otra ruta de la v1, relativa a /api/v1/{ruc} (p. ej. '/webhooks'). */
-  json(metodo: string, ruta: string, cuerpo?: unknown, cabeceras?: Record<string, string>): Promise<any>;
-  solicitar(metodo: string, ruta: string, cuerpo?: unknown, cabeceras?: Record<string, string>): Promise<RespuestaCruda>;
+  json(metodo: string, ruta: string, cuerpo?: unknown, cabeceras?: Record<string, string>, opciones?: OpcionesDePeticion): Promise<any>;
+  solicitar(metodo: string, ruta: string, cuerpo?: unknown, cabeceras?: Record<string, string>, opciones?: OpcionesDePeticion): Promise<RespuestaCruda>;
+  /** Cualquier ruta del servicio desde la raíz: '/api/v1/catalogos/03', '/api/v1/health'. */
+  peticion(metodo: string, rutaAbsoluta: string, cuerpo?: unknown, cabeceras?: Record<string, string>, opciones?: OpcionesDePeticion): Promise<RespuestaCruda>;
+}
+
+export interface OpcionesDePeticion {
+  /**
+   * Reintentar ante un corte de red o un 5xx aunque sea un POST sin
+   * Idempotency-Key. Sólo en lo que no cambia nada (una búsqueda). Las
+   * lecturas y lo que lleva Idempotency-Key se reintentan siempre.
+   */
+  reintentable?: boolean;
+}
+
+export interface OpcionesDePartner {
+  /** La clave del partner: cmpp_beta_… o cmpp_produccion_… */
+  clave: string;
+  base?: string;
+  fetch?: typeof fetch;
+  esperar?: (ms: number) => Promise<void>;
+  tiempoMaximo?: number;
+}
+
+/** La API de partners (/api/partner/v1). */
+export declare class Partner {
+  constructor(opciones: OpcionesDePartner);
+  /** Un cliente de la v1 para un RUC de tu cartera, con la clave del partner. */
+  emisor(ruc: string): Comprobia;
+  emisores(): Promise<Json>;
+  consumo(periodo?: string): Promise<Json>;
+  /** Cualquier ruta de la API de partners, relativa a /api/partner/v1. */
+  json(metodo: string, ruta: string, cuerpo?: unknown, cabeceras?: Record<string, string>, opciones?: OpcionesDePeticion): Promise<any>;
 }
 
 export interface ParametrosDeWebhook {

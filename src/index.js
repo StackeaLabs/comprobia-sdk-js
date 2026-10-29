@@ -9,7 +9,11 @@
 //   pasas una, la genera; si la red se corta, reintenta con LA MISMA, así que
 //   un comprobante nunca sale dos veces.
 // - Reintentos: hasta 3 intentos ante un corte de red, un 5xx o un 429 (con su
-//   Retry-After). Un 4xx que no es 429 no se reintenta: hay que corregir.
+//   Retry-After), pero SÓLO donde repetir no puede duplicar nada: lecturas
+//   (GET) y peticiones con Idempotency-Key. Un POST sin clave (crear un
+//   webhook, rotar su secreto, pedir una exportación) no se reintenta ante un
+//   corte o un 5xx: el servidor pudo haberlo hecho. El 429 sí, siempre: no se
+//   procesó. Un 4xx que no es 429 no se reintenta: hay que corregir.
 // - Errores: lo que no es 2xx lanza ErrorDeComprobia con el `code` estable,
 //   el `request_id` y el detalle por campo.
 //
@@ -18,7 +22,7 @@
 
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const BASE = 'https://comprobia.stackealabs.com';
 const INTENTOS = 3;
 
@@ -62,7 +66,7 @@ export class Comprobia {
     this.ruc = ruc;
     this.base = base.replace(/\/+$/, '');
     this.#fetch = f;
-    this.#esperar = esperar ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.#esperar = esperar ?? esperaReal;
     this.#tiempoMaximo = tiempoMaximo;
   }
 
@@ -83,9 +87,9 @@ export class Comprobia {
     return this.#conIdempotencia('POST', '/comprobantes/lote', { comprobantes }, claveIdempotencia);
   }
 
-  /** El PDF tal como saldría, sin gastar número. */
+  /** El PDF tal como saldría, sin gastar número. No cambia nada: se reintenta. */
   async vistaPrevia(comprobante) {
-    return (await this.solicitar('POST', '/comprobantes/vista-previa', comprobante)).bytes();
+    return (await this.solicitar('POST', '/comprobantes/vista-previa', comprobante, {}, { reintentable: true })).bytes();
   }
 
   comprobante(id) {
@@ -117,8 +121,9 @@ export class Comprobia {
     return this.#conIdempotencia('POST', `/comprobantes/${encodeURIComponent(id)}/anular`, { motivo }, claveIdempotencia);
   }
 
+  /** Reenviar los mismos bytes: repetirlo no hace otro comprobante, así que se reintenta. */
   reenviar(id) {
-    return this.json('POST', `/comprobantes/${encodeURIComponent(id)}/reenviar`);
+    return this.json('POST', `/comprobantes/${encodeURIComponent(id)}/reenviar`, undefined, {}, { reintentable: true });
   }
 
   /** @param {'a4'|'a5'|'ticket'|'ticket58'|'ticket50'} formato @returns {Promise<Uint8Array>} */
@@ -156,7 +161,7 @@ export class Comprobia {
    * @param {{tipo_documento: '01'|'03', serie: string, fecha_emision?: string, cliente?: object}} datos
    */
   convertirNotaVenta(id, datos) {
-    return this.json('POST', `/notas-venta/${encodeURIComponent(id)}/convertir`, datos);
+    return this.json('POST', `/notas-venta/${encodeURIComponent(id)}/convertir`, datos, {}, { reintentable: true });
   }
 
   anularNotaVenta(id, motivo) {
@@ -178,9 +183,14 @@ export class Comprobia {
     return this.json('GET', `/guias/${encodeURIComponent(id)}`);
   }
 
-  /** @param {'ruc'|'dni'} tipo */
+  /**
+   * El documento va en el cuerpo, no en la URL: un DNI no queda en ningún
+   * registro de acceso. Es una lectura, así que se reintenta.
+   *
+   * @param {'ruc'|'dni'} tipo
+   */
   buscarCliente(tipo, numero) {
-    return this.json('GET', `/clientes/${tipo}/${encodeURIComponent(numero)}`);
+    return this.json('POST', '/clientes/buscar', { tipo, numero: String(numero) }, {}, { reintentable: true });
   }
 
   consumo(periodo) {
@@ -190,56 +200,36 @@ export class Comprobia {
   // ── Lo demás ────────────────────────────────────────────────────────────
 
   /** Cualquier otra ruta de la v1, relativa a /api/v1/{ruc} (p. ej. '/webhooks'). */
-  async json(metodo, ruta, cuerpo, cabeceras = {}) {
-    return (await this.solicitar(metodo, ruta, cuerpo, cabeceras)).json();
+  async json(metodo, ruta, cuerpo, cabeceras = {}, opciones = {}) {
+    return (await this.solicitar(metodo, ruta, cuerpo, cabeceras, opciones)).json();
   }
 
   /**
+   * Relativa a /api/v1/{ruc}.
+   *
+   * @param {{ reintentable?: boolean }} [opciones] `reintentable: true` en un POST que no cambia nada (una búsqueda).
    * @returns {Promise<{ estado: number, cabeceras: Headers, json: () => Promise<any>, texto: () => Promise<string>, bytes: () => Promise<Uint8Array> }>}
    */
-  async solicitar(metodo, ruta, cuerpo, cabeceras = {}) {
-    const url = `${this.base}/api/v1/${this.ruc}${ruta}`;
-    const todas = {
-      Authorization: `Bearer ${this.#clave}`,
-      Accept: 'application/json',
-      'User-Agent': `comprobia-js/${VERSION}`,
-      ...(cuerpo === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...cabeceras,
-    };
-    const body = cuerpo === undefined ? undefined : JSON.stringify(cuerpo);
+  solicitar(metodo, ruta, cuerpo, cabeceras = {}, opciones = {}) {
+    return this.peticion(metodo, `/api/v1/${this.ruc}${ruta}`, cuerpo, cabeceras, opciones);
+  }
 
-    for (let intento = 1; ; intento++) {
-      let respuesta;
-
-      try {
-        respuesta = await this.#fetch(url, {
-          method: metodo,
-          headers: todas,
-          body,
-          redirect: 'manual',
-          signal: AbortSignal.timeout(this.#tiempoMaximo),
-        });
-      } catch {
-        // Sin el mensaje original: puede repetir la URL.
-        if (intento >= INTENTOS) {
-          throw new ErrorDeConexion('No hubo respuesta de Comprobia.', todas['Idempotency-Key'] ?? null);
-        }
-        await this.#esperar(espera(intento, null));
-        continue;
-      }
-
-      if (respuesta.status < 400) {
-        return envolver(respuesta);
-      }
-
-      const reintentable = respuesta.status === 429 || respuesta.status >= 500;
-
-      if (!reintentable || intento >= INTENTOS) {
-        throw await errorDesde(respuesta);
-      }
-
-      await this.#esperar(espera(intento, respuesta.headers.get('retry-after')));
-    }
+  /**
+   * Cualquier ruta del servicio, desde la raíz: '/api/v1/catalogos/03',
+   * '/api/v1/health'. Devuelve lo mismo que `solicitar`.
+   */
+  peticion(metodo, rutaAbsoluta, cuerpo, cabeceras = {}, opciones = {}) {
+    return pedir({
+      fetch: this.#fetch,
+      esperar: this.#esperar,
+      tiempoMaximo: this.#tiempoMaximo,
+      clave: this.#clave,
+      url: `${this.base}${rutaAbsoluta}`,
+      metodo,
+      cuerpo,
+      cabeceras,
+      reintentable: opciones.reintentable === true,
+    });
   }
 
   #conIdempotencia(metodo, ruta, cuerpo, clave) {
@@ -256,6 +246,58 @@ export class Comprobia {
       }
       cursor = pagina.siguiente_cursor ?? null;
     } while (cursor);
+  }
+}
+
+// ── Partners ──────────────────────────────────────────────────────────────
+
+/**
+ * La API de partners (/api/partner/v1), para quien opera los RUC de sus
+ * clientes con una sola clave (`cmpp_…`). Para emitir por uno de ellos,
+ * `partner.emisor(ruc)` devuelve un cliente `Comprobia` con la misma clave.
+ */
+export class Partner {
+  /**
+   * @param {{ clave: string, base?: string, fetch?: typeof fetch, esperar?: (ms: number) => Promise<void>, tiempoMaximo?: number }} opciones
+   */
+  constructor({ clave, base = BASE, fetch: f = globalThis.fetch, esperar, tiempoMaximo = 60_000 }) {
+    if (!clave) {
+      throw new TypeError('Partner necesita la clave de API del partner.');
+    }
+    this.#opciones = { clave, base: base.replace(/\/+$/, ''), fetch: f, esperar: esperar ?? esperaReal, tiempoMaximo };
+  }
+
+  #opciones;
+
+  /** Un cliente de la v1 para un RUC de tu cartera. */
+  emisor(ruc) {
+    return new Comprobia({ ...this.#opciones, ruc });
+  }
+
+  emisores() {
+    return this.json('GET', '/emisores');
+  }
+
+  consumo(periodo) {
+    return this.json('GET', `/consumo${query(periodo ? { periodo } : {})}`);
+  }
+
+  /** Cualquier ruta de la API de partners, relativa a /api/partner/v1. */
+  async json(metodo, ruta, cuerpo, cabeceras = {}, opciones = {}) {
+    const o = this.#opciones;
+    const r = await pedir({
+      fetch: o.fetch,
+      esperar: o.esperar,
+      tiempoMaximo: o.tiempoMaximo,
+      clave: o.clave,
+      url: `${o.base}/api/partner/v1${ruta}`,
+      metodo,
+      cuerpo,
+      cabeceras,
+      reintentable: opciones.reintentable === true,
+    });
+
+    return r.json();
   }
 }
 
@@ -307,6 +349,58 @@ export function leerWebhook(parametros) {
 }
 
 // ── Internos ──────────────────────────────────────────────────────────────
+
+/** El bucle de una petición con sus reintentos, común a los dos clientes. */
+async function pedir({ fetch: f, esperar, tiempoMaximo, clave, url, metodo, cuerpo, cabeceras, reintentable }) {
+  const todas = {
+    Authorization: `Bearer ${clave}`,
+    Accept: 'application/json',
+    'User-Agent': `comprobia-js/${VERSION}`,
+    ...(cuerpo === undefined ? {} : { 'Content-Type': 'application/json' }),
+    ...cabeceras,
+  };
+  const body = cuerpo === undefined ? undefined : JSON.stringify(cuerpo);
+  // Repetir sólo donde no puede duplicar nada.
+  const seguro = reintentable || metodo === 'GET' || metodo === 'HEAD' || todas['Idempotency-Key'] !== undefined;
+
+  for (let intento = 1; ; intento++) {
+    let respuesta;
+
+    try {
+      respuesta = await f(url, {
+        method: metodo,
+        headers: todas,
+        body,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(tiempoMaximo),
+      });
+    } catch {
+      // Sin el mensaje original: puede repetir la URL.
+      if (!seguro || intento >= INTENTOS) {
+        throw new ErrorDeConexion('No hubo respuesta de Comprobia.', todas['Idempotency-Key'] ?? null);
+      }
+      await esperar(espera(intento, null));
+      continue;
+    }
+
+    if (respuesta.status < 400) {
+      return envolver(respuesta);
+    }
+
+    // El 429 no se procesó: se reintenta siempre. Un 5xx, sólo si es seguro.
+    const repetir = respuesta.status === 429 || (respuesta.status >= 500 && seguro);
+
+    if (!repetir || intento >= INTENTOS) {
+      throw await errorDesde(respuesta);
+    }
+
+    await esperar(espera(intento, respuesta.headers.get('retry-after')));
+  }
+}
+
+function esperaReal(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function query(filtros) {
   const pares = Object.entries(filtros).filter(([, v]) => v !== undefined && v !== null && v !== '');

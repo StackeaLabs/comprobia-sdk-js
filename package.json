@@ -1,6 +1,6 @@
 {
   "name": "@stackealabs/comprobia",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cliente fino de JavaScript para la API de Comprobia: facturación electrónica SUNAT por API.",
   "type": "module",
   "main": "./src/index.js",
